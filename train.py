@@ -7,12 +7,12 @@ import socket
 import importlib
 import os
 import sys
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(BASE_DIR)
-sys.path.append(os.path.join(BASE_DIR, 'models'))
-sys.path.append(os.path.join(BASE_DIR, 'utils'))
+import models
+from models.pointnet_basic_ndt import PNetBasicNDT
+import utils
+import utils.tf_util
 import provider
-import tf_util
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU 0]')
@@ -48,8 +48,7 @@ os.system('cp train.py %s' % (LOG_DIR)) # bkp of train procedure
 LOG_FOUT = open(os.path.join(LOG_DIR, 'log_train.txt'), 'w')
 LOG_FOUT.write(str(FLAGS)+'\n')
 
-MAX_NUM_POINT = 2048
-NUM_CLASSES = 40
+NUM_CLASSES = 2
 
 BN_INIT_DECAY = 0.5
 BN_DECAY_DECAY_RATE = 0.5
@@ -78,7 +77,7 @@ def get_learning_rate(batch):
                         DECAY_RATE,          # Decay rate.
                         staircase=True)
     learning_rate = tf.maximum(learning_rate, 0.00001) # CLIP THE LEARNING RATE!
-    return learning_rate        
+    return learning_rate
 
 def get_bn_decay(batch):
     bn_momentum = tf.train.exponential_decay(
@@ -91,35 +90,21 @@ def get_bn_decay(batch):
     return bn_decay
 
 def train():
+    pnet_ndt = PNetBasicNDT(FLAGS.batch_size, FLAGS.num_point)
+    pointclouds_pl, labels_pl, batch_pl, is_training_pl = pnet_ndt.get_input_pls()
+    train_op, pred, loss = pnet_ndt.get_output_tensors()
+
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(GPU_INDEX)):
-            pointclouds_pl, labels_pl = MODEL.placeholder_inputs(BATCH_SIZE, NUM_POINT)
-            is_training_pl = tf.placeholder(tf.bool, shape=())
-            print(is_training_pl)
             
             # Note the global_step=batch parameter to minimize. 
             # That tells the optimizer to helpfully increment the 'batch' parameter for you every time it trains.
-            batch = tf.Variable(0)
-            bn_decay = get_bn_decay(batch)
+            bn_decay = get_bn_decay(batch_pl)
             tf.summary.scalar('bn_decay', bn_decay)
 
-            # Get model and loss 
-            pred, end_points = MODEL.get_model(pointclouds_pl, is_training_pl, bn_decay=bn_decay)
-            loss = MODEL.get_loss(pred, labels_pl, end_points)
-            tf.summary.scalar('loss', loss)
-
-            correct = tf.equal(tf.argmax(pred, 1), tf.to_int64(labels_pl))
-            accuracy = tf.reduce_sum(tf.cast(correct, tf.float32)) / float(BATCH_SIZE)
-            tf.summary.scalar('accuracy', accuracy)
-
             # Get training operator
-            learning_rate = get_learning_rate(batch)
+            learning_rate = get_learning_rate(batch_pl)
             tf.summary.scalar('learning_rate', learning_rate)
-            if OPTIMIZER == 'momentum':
-                optimizer = tf.train.MomentumOptimizer(learning_rate, momentum=MOMENTUM)
-            elif OPTIMIZER == 'adam':
-                optimizer = tf.train.AdamOptimizer(learning_rate)
-            train_op = optimizer.minimize(loss, global_step=batch)
             
             # Add ops to save and restore all the variables.
             saver = tf.train.Saver()
@@ -132,18 +117,13 @@ def train():
         sess = tf.Session(config=config)
 
         # Add summary writers
-        #merged = tf.merge_all_summaries()
         merged = tf.summary.merge_all()
         train_writer = tf.summary.FileWriter(os.path.join(LOG_DIR, 'train'),
                                   sess.graph)
         test_writer = tf.summary.FileWriter(os.path.join(LOG_DIR, 'test'))
 
         # Init variables
-        init = tf.global_variables_initializer()
-        # To fix the bug introduced in TF 0.12.1 as in
-        # http://stackoverflow.com/questions/41543774/invalidargumenterror-for-tensor-bool-tensorflow-0-12-1
-        #sess.run(init)
-        sess.run(init, {is_training_pl: True})
+        sess.run(pnet_ndt.init_op, {is_training_pl: True})
 
         ops = {'pointclouds_pl': pointclouds_pl,
                'labels_pl': labels_pl,
@@ -152,7 +132,7 @@ def train():
                'loss': loss,
                'train_op': train_op,
                'merged': merged,
-               'step': batch}
+               'step': batch_pl}
 
         for epoch in range(MAX_EPOCH):
             log_string('**** EPOCH %03d ****' % (epoch))
