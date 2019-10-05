@@ -57,7 +57,8 @@ def read_bin(fname, ndim = 3):
         return None
 
 # xyz is Nx3, step = vox_size
-def compute_ndt(xyz, step):
+# return Kx6 where K is top_n
+def compute_ndt(xyz, step, top_n):
     n_pts_total = xyz.shape[0]
 
     xyz = xyz.transpose() # convert to 3xN
@@ -93,12 +94,21 @@ def compute_ndt(xyz, step):
                     this_ndt = np.concatenate(([n_pts], np.zero(6)))
                 ndt = np.vstack((ndt, this_ndt))
 
-# Returns xyz (Nx3) and label (int)
-def loadDataFile(data_tup, vox_size):
+    # sort ndt by first column (n_pts) in descending order
+    ndt = ndt[ndt[:,0].argsort()[::-1], :]
+
+    if ndt.shape[0]>=top_n:
+        return ndt[:top_n, 1:]
+    else:
+        ndt = np.vstack((ndt, np.zeros((top_n-ndt.shape[0], 7))))
+        return ndt[:, 1:]
+
+# Returns ndt (Nx6) and label (int)
+def loadDataFile(data_tup, vox_size, top_n):
     bin_file, label = data_tup
     xyz = read_bin(bin_file)
-    ndt = compute_ndt(xyz, vox_size)
-    return xyz, int(label)
+    ndt = compute_ndt(xyz, vox_size, top_n)
+    return ndt, int(label)
 
 # Returns [[filename_0, label_0], [filename_1, label_1], ...]
 def getDataFiles(list_filename):

@@ -162,46 +162,48 @@ def train_one_epoch(sess, ops, train_writer):
     n_samples = len(TRAIN_FILES)
     num_batches = n_samples // BATCH_SIZE
 
+    all_data, all_labels = [], []
     # TRAIN_FILES = [[filename_0, label_0], [filename_1, label_1], ...]
     for fn in range(len(TRAIN_FILES)):
         # log_string('----' + str(fn) + '-----')
-        current_data, current_label = provider.loadDataFile(TRAIN_FILES[fn], VOX_SIZE)
-        current_data = current_data[np.newaxis, :] # make BxNx3
+        current_data, current_label = provider.loadDataFile(TRAIN_FILES[fn], VOX_SIZE, NUM_POINT)
+        current_data = current_data[np.newaxis, :] # make BxNx6
         current_label = current_label[np.newaxis, :] # make B
+        all_data.append(current_data)
+        all_labels.append(current_label)
 
     train_file_idxs = np.arange(0, n_samples)
     np.random.shuffle(train_file_idxs)
-    
 
-        current_data = current_data[:,0:NUM_POINT,:]
-        current_data, current_label, _ = provider.shuffle_data(current_data, np.squeeze(current_label))            
-        current_label = np.squeeze(current_label)
+    current_data = current_data[:,0:NUM_POINT,:]
+    current_data, current_label, _ = provider.shuffle_data(current_data, np.squeeze(current_label))
+    current_label = np.squeeze(current_label)
 
-        total_correct = 0
-        total_seen = 0
-        loss_sum = 0
-       
-        for batch_idx in range(num_batches):
-            start_idx = batch_idx * BATCH_SIZE
-            end_idx = (batch_idx+1) * BATCH_SIZE
-            
-            # Augment batched point clouds by rotation and jittering
-            rotated_data = provider.rotate_point_cloud(current_data[start_idx:end_idx, :, :])
-            jittered_data = provider.jitter_point_cloud(rotated_data)
-            feed_dict = {ops['pointclouds_pl']: jittered_data,
-                         ops['labels_pl']: current_label[start_idx:end_idx],
-                         ops['is_training_pl']: is_training,}
-            summary, step, _, loss_val, pred_val = sess.run([ops['merged'], ops['step'],
-                ops['train_op'], ops['loss'], ops['pred']], feed_dict=feed_dict)
-            train_writer.add_summary(summary, step)
-            pred_val = np.argmax(pred_val, 1)
-            correct = np.sum(pred_val == current_label[start_idx:end_idx])
-            total_correct += correct
-            total_seen += BATCH_SIZE
-            loss_sum += loss_val
-        
-        log_string('mean loss: %f' % (loss_sum / float(num_batches)))
-        log_string('accuracy: %f' % (total_correct / float(total_seen)))
+    total_correct = 0
+    total_seen = 0
+    loss_sum = 0
+
+    for batch_idx in range(num_batches):
+        start_idx = batch_idx * BATCH_SIZE
+        end_idx = (batch_idx+1) * BATCH_SIZE
+
+        # Augment batched point clouds by rotation and jittering
+        rotated_data = provider.rotate_point_cloud(current_data[start_idx:end_idx, :, :])
+        jittered_data = provider.jitter_point_cloud(rotated_data)
+        feed_dict = {ops['pointclouds_pl']: jittered_data,
+                     ops['labels_pl']: current_label[start_idx:end_idx],
+                     ops['is_training_pl']: is_training,}
+        summary, step, _, loss_val, pred_val = sess.run([ops['merged'], ops['step'],
+            ops['train_op'], ops['loss'], ops['pred']], feed_dict=feed_dict)
+        train_writer.add_summary(summary, step)
+        pred_val = np.argmax(pred_val, 1)
+        correct = np.sum(pred_val == current_label[start_idx:end_idx])
+        total_correct += correct
+        total_seen += BATCH_SIZE
+        loss_sum += loss_val
+
+    log_string('mean loss: %f' % (loss_sum / float(num_batches)))
+    log_string('accuracy: %f' % (total_correct / float(total_seen)))
 
         
 def eval_one_epoch(sess, ops, test_writer):
