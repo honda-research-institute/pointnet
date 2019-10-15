@@ -113,6 +113,7 @@ def get_all_train_data():
         current_data = current_data[np.newaxis, :]  # make size=BxNx7
         all_data = np.concatenate((all_data, current_data))
         all_labels = np.concatenate((all_labels, current_labels))
+    all_labels = all_labels.astype(np.int32) # force to int type
     bar.finish()
     return all_data, all_labels
 
@@ -129,6 +130,7 @@ def get_all_test_data():
         current_data = current_data[np.newaxis, :]  # make size=BxNx7
         all_data = np.concatenate((all_data, current_data))
         all_labels = np.concatenate((all_labels, current_labels))
+    all_labels = all_labels.astype(np.int32) # force to int type
     bar.finish()
     return all_data, all_labels
 
@@ -142,6 +144,7 @@ def train():
         all_train_data, all_train_labels = get_all_train_data()
         with open(train_pkl, 'wb') as f:
             pickle.dump((all_train_data, all_train_labels), f)
+    all_train_labels = all_train_labels.astype(np.int32)  # force to int type
 
     test_pkl = os.path.join(DATASET_DIR, 'test.pkl')
     if os.path.isfile(test_pkl):
@@ -151,6 +154,7 @@ def train():
         all_test_data, all_test_labels = get_all_test_data()
         with open(test_pkl, 'wb') as f:
             pickle.dump((all_test_data, all_test_labels), f)
+    all_test_labels = all_test_labels.astype(np.int32)  # force to int type
 
     with tf.Graph().as_default():
         with tf.device('/gpu:' + str(GPU_INDEX)):
@@ -260,7 +264,7 @@ def train_one_epoch(sess, ops, all_data, all_labels, train_writer):
                                                         feed_dict=feed_dict)
         train_writer.add_summary(summary, step)
         pred_val = np.argmax(pred_val, 1)
-        correct = np.sum(pred_val == current_labels[start_idx:end_idx])
+        correct = np.sum(pred_val == all_labels[start_idx:end_idx])
         total_correct += correct
         total_seen += BATCH_SIZE
         loss_sum += loss_val
@@ -278,11 +282,11 @@ def eval_one_epoch(sess, ops, all_data, all_labels, test_writer):
     total_seen_class = [0 for _ in range(NUM_CLASSES)]
     total_correct_class = [0 for _ in range(NUM_CLASSES)]
 
-    n_samples = len(TRAIN_FILES)
+    n_samples = len(TEST_FILES)
     num_batches = n_samples // BATCH_SIZE
-    train_file_idxs = np.arange(0, n_samples)
-    all_data = all_data[train_file_idxs, ...]  # BxNUM_POINTx7
-    all_labels = all_labels[train_file_idxs, ...]  # B
+    test_file_idxs = np.arange(0, n_samples)
+    all_data = all_data[test_file_idxs, ...]  # BxNUM_POINTx7
+    all_labels = all_labels[test_file_idxs, ...]  # B
 
     for batch_idx in range(num_batches):
         start_idx = batch_idx * BATCH_SIZE
@@ -295,12 +299,13 @@ def eval_one_epoch(sess, ops, all_data, all_labels, test_writer):
         summary, step, loss_val, pred_val = sess.run([ops['merged'], ops['step'],
                                                       ops['loss'], ops['pred']], feed_dict=feed_dict)
         pred_val = np.argmax(pred_val, 1)
-        correct = np.sum(pred_val == current_labels[start_idx:end_idx])
+        correct = np.sum(pred_val == all_labels[start_idx:end_idx])
         total_correct += correct
         total_seen += BATCH_SIZE
         loss_sum += (loss_val * BATCH_SIZE)
+
         for i in range(start_idx, end_idx):
-            l = current_labels[i]
+            l = all_labels[i]
             total_seen_class[l] += 1
             total_correct_class[l] += (pred_val[i - start_idx] == l)
 
