@@ -7,6 +7,7 @@ import socket
 import importlib
 import os
 import sys
+import pickle
 from progress.bar import Bar # sudo pip3 install progress
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -18,6 +19,7 @@ from models.pointnet_basic_ndt import PNetBasicNDT
 import utils
 import utils.tf_util
 import provider
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU 0]')
@@ -101,8 +103,7 @@ def get_bn_decay(batch):
 # TRAIN_FILES = [[filename_0, label_0], [filename_1, label_1], ...]
 def get_all_train_data():
     all_data, all_labels = np.empty((0, NUM_POINT, 7)), np.empty((0))
-    bar = Bar('Parsing train files', max=20, suffix='%(index)d/%(max)d - %(percent).1f%% - %(eta)ds')
-    bar.max = len(TRAIN_FILES)
+    bar = Bar('Parsing train files', max=len(TRAIN_FILES), suffix='%(index)d/%(max)d - %(percent).1f%% - %(eta)ds')
     for fn in range(len(TRAIN_FILES)):
         #print("{}/{}".format(fn, len(TRAIN_FILES)))
         bar.next()
@@ -118,8 +119,7 @@ def get_all_train_data():
 # TRAIN_FILES = [[filename_0, label_0], [filename_1, label_1], ...]
 def get_all_test_data():
     all_data, all_labels = np.empty((0, NUM_POINT, 7)), np.empty((0))
-    bar = Bar('Parsing test files', max=20, suffix='%(index)d/%(max)d - %(percent).1f%% - %(eta)ds')
-    bar.max = len(TEST_FILES)
+    bar = Bar('Parsing test files', max=len(TEST_FILES), suffix='%(index)d/%(max)d - %(percent).1f%% - %(eta)ds')
     for fn in range(len(TEST_FILES)):
         #print("{}/{}".format(fn, len(TEST_FILES)))
         bar.next()
@@ -134,26 +134,54 @@ def get_all_test_data():
 
 def train():
     # TRAIN_FILES = [[filename_0, label_0], [filename_1, label_1], ...]
-    all_train_data, all_train_labels = get_all_train_data()
-    all_test_data, all_test_labels = get_all_test_data()
+    train_pkl = os.path.join(DATASET_DIR, 'train.pkl')
+    if os.path.isfile(train_pkl):
+        with open(train_pkl, 'rb') as f:
+            all_train_data, all_train_labels = pickle.load(f)
+    else:
+        all_train_data, all_train_labels = get_all_train_data()
+        with open(train_pkl, 'wb') as f:
+            pickle.dump((all_train_data, all_train_labels), f)
 
-    pnet_ndt = PNetBasicNDT(FLAGS.batch_size, FLAGS.num_point)
-    with pnet_ndt.get_graph().as_default():
+    test_pkl = os.path.join(DATASET_DIR, 'test.pkl')
+    if os.path.isfile(test_pkl):
+        with open(test_pkl, 'rb') as f:
+            all_test_data, all_test_labels = pickle.load(f)
+    else:
+        all_test_data, all_test_labels = get_all_test_data()
+        with open(test_pkl, 'wb') as f:
+            pickle.dump((all_test_data, all_test_labels), f)
+
+    with tf.Graph().as_default():
         with tf.device('/gpu:' + str(GPU_INDEX)):
-            pointclouds_pl, labels_pl, is_training_pl = pnet_ndt.get_input_pls()
-            train_op, pred, loss = pnet_ndt.get_output_tensors()
+            pnet_ndt = PNetBasicNDT(FLAGS.batch_size, FLAGS.num_point)
+            pointclouds_pl, labels_pl = pnet_ndt.placeholder_inputs()
+            is_training_pl = tf.placeholder(tf.bool, shape=())
+            print(is_training_pl)
 
             # Note the global_step=batch parameter to minimize. 
             # That tells the optimizer to helpfully increment the 'batch' parameter for you every time it trains.
-            batch_pl = tf.Variable(0)
-            pnet_ndt.batch = batch_pl
-            bn_decay = get_bn_decay(batch_pl)
-            pnet_ndt.bn_decay = bn_decay
+            batch = tf.Variable(0)
+            bn_decay = get_bn_decay(batch)
             tf.summary.scalar('bn_decay', bn_decay)
 
+            # Get model and loss
+            pred, end_points = pnet_ndt.get_model(pointclouds_pl, is_training_pl, bn_decay=bn_decay)
+            loss = pnet_ndt.get_loss(pred, labels_pl, end_points)
+            tf.summary.scalar('loss', loss)
+
+            correct = tf.equal(tf.argmax(pred, 1), tf.to_int64(labels_pl))
+            accuracy = tf.reduce_sum(tf.cast(correct, tf.float32)) / float(BATCH_SIZE)
+            tf.summary.scalar('accuracy', accuracy)
+
             # Get training operator
-            learning_rate = get_learning_rate(batch_pl)
+            learning_rate = get_learning_rate(batch)
             tf.summary.scalar('learning_rate', learning_rate)
+            if OPTIMIZER == 'momentum':
+                optimizer = tf.train.MomentumOptimizer(learning_rate, momentum=MOMENTUM)
+            elif OPTIMIZER == 'adam':
+                optimizer = tf.train.AdamOptimizer(learning_rate)
+            train_op = optimizer.minimize(loss, global_step=batch)
 
             # Add ops to save and restore all the variables.
             saver = tf.train.Saver()
@@ -172,7 +200,8 @@ def train():
         test_writer = tf.summary.FileWriter(os.path.join(LOG_DIR, 'test'))
 
         # Init variables
-        sess.run(pnet_ndt.init_op, {is_training_pl: True})
+        init = tf.global_variables_initializer()
+        sess.run(init, {is_training_pl: True})
 
         ops = {'pointclouds_pl': pointclouds_pl,
                'labels_pl': labels_pl,
@@ -181,7 +210,7 @@ def train():
                'loss': loss,
                'train_op': train_op,
                'merged': merged,
-               'step': batch_pl}
+               'step': batch}
 
         for epoch in range(MAX_EPOCH):
             log_string('**** EPOCH %03d ****' % (epoch))
