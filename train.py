@@ -1,6 +1,5 @@
 import argparse
-import math
-import h5py
+import h5py # sudo pip3 install h5py
 import numpy as np
 import tensorflow as tf
 import socket
