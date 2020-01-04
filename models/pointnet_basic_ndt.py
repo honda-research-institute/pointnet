@@ -11,13 +11,12 @@ import tf_util
 
 
 class PNetBasicNDT(object):
-    def __init__(self, batch_size, num_point):
-        self.batch_size = batch_size
-        self.num_point = num_point
+    def __init__(self):
+        pass
 
-    def placeholder_inputs(self):
-        pointclouds_pl = tf.placeholder(tf.float32, shape=(self.batch_size, self.num_point, 7))
-        labels_pl = tf.placeholder(tf.int32, shape=(self.batch_size))
+    def placeholder_inputs(self, batch_size, num_point):
+        pointclouds_pl = tf.placeholder(tf.float32, shape=(batch_size, num_point, 7))
+        labels_pl = tf.placeholder(tf.int32, shape=(batch_size))
         return pointclouds_pl, labels_pl
 
     def get_model(self, point_cloud, is_training, bn_decay = None):
@@ -50,11 +49,11 @@ class PNetBasicNDT(object):
                              scope='conv5', bn_decay=bn_decay)
 
         # Symmetric function: max pooling
-        net = tf_util.max_pool2d(net, [self.num_point, 1],
+        net = tf_util.max_pool2d(net, [num_point, 1],
                                  padding='VALID', scope='maxpool')
 
         # MLP on global point cloud vector
-        net = tf.reshape(net, [self.batch_size, -1])
+        net = tf.reshape(net, [batch_size, -1])
         net = tf_util.fully_connected(net, 512, bn=True, is_training=is_training,
                                       scope='fc1', bn_decay=bn_decay)
         net = tf_util.fully_connected(net, 256, bn=True, is_training=is_training,

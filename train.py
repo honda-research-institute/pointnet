@@ -13,7 +13,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(BASE_DIR, 'models'))
 sys.path.append(os.path.join(BASE_DIR, 'utils'))
-import models
 from models.pointnet_basic_ndt import PNetBasicNDT
 import utils
 import utils.tf_util
@@ -29,7 +28,7 @@ parser.add_argument('--dataset_dir', default='/home/jhuang/Kitti/jhuang',
                     help='Dataset dir [default: /home/jhuang/Kitti/jhuang]')
 parser.add_argument('--vox_size', type=float, default=0.5, help='Voxel size in m [default: 0.5]')
 parser.add_argument('--num_point', type=int, default=32, help='Point Number [256/512/1024/2048] [default: 1024]')
-parser.add_argument('--max_epoch', type=int, default=250, help='Epoch to run [default: 250]')
+parser.add_argument('--max_epoch', type=int, default=80, help='Epoch to run [default: 80]')
 parser.add_argument('--batch_size', type=int, default=8, help='Batch Size during training [default: 32]')
 parser.add_argument('--learning_rate', type=float, default=0.001, help='Initial learning rate [default: 0.001]')
 parser.add_argument('--momentum', type=float, default=0.9, help='Initial learning rate [default: 0.9]')
@@ -104,7 +103,6 @@ def get_all_train_data():
     all_data, all_labels = np.empty((0, NUM_POINT, 7)), np.empty((0))
     bar = Bar('Parsing train files', max=len(TRAIN_FILES), suffix='%(index)d/%(max)d - %(percent).1f%% - %(eta)ds')
     for fn in range(len(TRAIN_FILES)):
-        #print("{}/{}".format(fn, len(TRAIN_FILES)))
         bar.next()
         fname = os.path.join(DATASET_DIR, TRAIN_FILES[fn][0])
         label = TRAIN_FILES[fn][1]
@@ -121,7 +119,6 @@ def get_all_test_data():
     all_data, all_labels = np.empty((0, NUM_POINT, 7)), np.empty((0))
     bar = Bar('Parsing test files', max=len(TEST_FILES), suffix='%(index)d/%(max)d - %(percent).1f%% - %(eta)ds')
     for fn in range(len(TEST_FILES)):
-        #print("{}/{}".format(fn, len(TEST_FILES)))
         bar.next()
         fname = os.path.join(DATASET_DIR, TRAIN_FILES[fn][0])
         label = TRAIN_FILES[fn][1]
@@ -143,7 +140,6 @@ def train():
         all_train_data, all_train_labels = get_all_train_data()
         with open(train_pkl, 'wb') as f:
             pickle.dump((all_train_data, all_train_labels), f)
-    all_train_labels = all_train_labels.astype(np.int32)  # force to int type
 
     test_pkl = os.path.join(DATASET_DIR, 'test.pkl')
     if os.path.isfile(test_pkl):
@@ -153,12 +149,11 @@ def train():
         all_test_data, all_test_labels = get_all_test_data()
         with open(test_pkl, 'wb') as f:
             pickle.dump((all_test_data, all_test_labels), f)
-    all_test_labels = all_test_labels.astype(np.int32)  # force to int type
 
     with tf.Graph().as_default():
         with tf.device('/gpu:' + str(GPU_INDEX)):
-            pnet_ndt = PNetBasicNDT(FLAGS.batch_size, FLAGS.num_point)
-            pointclouds_pl, labels_pl = pnet_ndt.placeholder_inputs()
+            pnet_ndt = PNetBasicNDT()
+            pointclouds_pl, labels_pl = pnet_ndt.placeholder_inputs(FLAGS.batch_size, FLAGS.num_point)
             is_training_pl = tf.placeholder(tf.bool, shape=())
             print(is_training_pl)
 
